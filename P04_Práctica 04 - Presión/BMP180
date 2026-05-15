@@ -1,0 +1,480 @@
+----------------------------------------------------------------------------------------------------------------------------------------------
+-------------------------------------------------Obtener la energía por unidad de tiempo en Zacatecas.----------------------------------------
+
+#include <Wire.h> //librería de Arduino para comunicación I2C.
+#include <Adafruit_BMP085.h> //Libreria del sensor.
+
+Adafruit_BMP085 bmp; //Se crea un objeto llamado "bmp" para usarla libreria más facil. 
+
+void setup() {
+  Serial.begin(9600); //inicia la comunicación serial a 9600 baudios.
+  bmp.begin();  // inicializa el sensor. Internamente establece la conexión I2C.
+}
+
+void loop() {
+  float P = bmp.readPressure(); //devuelve la presión en Pascales (Pa).
+  float T = bmp.readTemperature() + 273.15; //devuelve la temperatura en °C, se le suman 273.15 para que sean °K.
+
+  float R_esp = 287.68; //Constante del aire seco J/(Kg*°K), constante universal de los gases = 8.314J/K*mol, masa molar del aire = 0.029Kg/mol.
+  //Ley de Gas ideal p=P/(R_cons)(T)   p=densidad del aire(Kg/m^3), P=presión absoluta(Pa), R_cosnt=Coantante del aire seco. 
+  float densidad = P / (R_esp * T); //Calculo de la densiad. 
+
+  //impresion de los valores. "println" genera un salto de linea.  
+  Serial.print("Presión: "); Serial.print(P);  Serial.println(" Pa");
+  Serial.print("Temperatura: "); Serial.print(T - 273.15); Serial.println(" °C");
+  Serial.print("Densidad: ");   Serial.print(densidad, 4); Serial.println(" kg/m³");
+
+  delay(2000);//pausa de 2 seg. 
+}
+
+--------------------------------------------------------------------------------------------------------------------------------------------------
+-----------------------------formula del CIPM-2007--------------------------
+
+clc; clear; close all;
+
+%% === DATOS DE ENTRADA ===
+
+T_C = 28.90;            % Temperatura en °C
+p = 77656;           % Presión en Pa
+HR = 0.2113;           % Humedad relativa (0 a 1)
+
+%% === CONVERSIONES ===
+T = T_C + 273.15;    % Temperatura en Kelvin
+
+%% === CONSTANTES ===
+R = 8.314472;        % J/(mol·K)
+Ma = 0.02896546;     % kg/mol (aire seco)
+Mv = 0.01801528;     % kg/mol (vapor de agua)
+
+%% === PRESIÓN DE VAPOR SATURADO (Pa) ===
+% Fórmula tipo Magnus (suficientemente precisa para práctica)
+psv = 610.94 * exp((17.625 * T_C) / (T_C + 243.04));
+
+%% === FRACCIÓN MOLAR DE VAPOR DE AGUA ===
+xv = (HR * psv) / p;
+
+%% === FACTOR DE COMPRESIBILIDAD (aprox. ideal) ===
+Z = 1;   % Para condiciones normales (puedes refinar si lo necesitas)
+
+%% === DENSIDAD DEL AIRE (CIPM-2007) ===
+rho = (p * Ma) / (Z * R * T) * (1 - xv * (1 - (Mv / Ma)));
+
+%% === RESULTADO ===
+fprintf('Densidad del aire: %.4f kg/m^3\n', rho);
+
+-----------------------------------------------------------------------
+--------------------------fenología arduino----------------------------
+
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
+
+Adafruit_BMP085 bmp;
+
+void setup() {
+  Serial.begin(9600);
+
+  if (!bmp.begin()) {
+    Serial.println("No se detecta BMP180");
+    while (1);
+  }
+}
+
+void loop() {
+  float temperatura = bmp.readTemperature(); // °C
+
+  Serial.println(temperatura);
+
+  delay(1000);
+}
+
+-----------------------------------------------------------------------
+----------------------------fenología matlab---------------------------
+
+clear
+clc
+
+arduino = serialport("COM8",9600);
+
+Tbase = 10;
+
+temperaturas = [];
+UC_acumuladas = 0;
+
+figure
+
+while true
+    dato = readline(arduino);
+    temp = str2double(dato);
+
+    if ~isnan(temp)
+        temperaturas(end+1) = temp;
+
+        % Simulación tipo "día"
+        if length(temperaturas) >= 60  % 60 segundos = 1 "día"
+            
+            Tmax = max(temperaturas);
+            Tmin = min(temperaturas);
+
+            UC = ((Tmax + Tmin)/2) - Tbase;
+
+            if UC < 0
+                UC = 0;
+            end
+
+            UC_acumuladas = UC_acumuladas + UC;
+
+            % Determinar etapa
+            if UC_acumuladas < 100
+                etapa = "Germinación";
+            elseif UC_acumuladas < 400
+                etapa = "Crecimiento";
+            elseif UC_acumuladas < 700
+                etapa = "Floración";
+            else
+                etapa = "Maduración";
+            end
+
+            fprintf("\n--- NUEVO DIA ---\n");
+            fprintf("Tmax: %.2f | Tmin: %.2f\n", Tmax, Tmin);
+            fprintf("UC día: %.2f | UC acumuladas: %.2f\n", UC, UC_acumuladas);
+            fprintf("Etapa: %s\n", etapa);
+
+            % Reiniciar para siguiente "día"
+            temperaturas = [];
+        end
+
+        % Gráfica en tiempo real
+        plot(temperaturas)
+        xlabel('Tiempo (seg)')
+        ylabel('Temperatura °C')
+        drawnow
+    end
+end
+
+---------------------------------------------------------------------------------
+------------------función de transferencia (obtención de datos)------------------
+
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
+
+Adafruit_BMP085 bmp;
+
+// Pin LM35
+int pinLM35 = A0;
+
+// Tiempo
+unsigned long tiempoInicio;
+
+// Número de muestras para promedio (reduce ruido)
+const int N = 10;
+
+void setup() {
+  Serial.begin(9600);
+
+  //analogReference(INTERNAL);
+
+  bmp.begin();
+
+  tiempoInicio = millis();
+
+  // Encabezado limpio para MATLAB
+  Serial.println("Tiempo,LM35,BMP180");
+}
+
+void loop() {
+
+  // Tiempo en segundos
+  float tiempo = (millis() - tiempoInicio) / 1000.0;
+
+  // Promedio LM35 (anti-ruido)
+  float suma = 0;
+  for (int i = 0; i < N; i++) {
+    suma += analogRead(pinLM35);
+    delay(10); // pequeña pausa
+  }
+  float lecturaProm = suma / N;
+
+  float voltaje = lecturaProm * (5.0 / 1023.0);
+  float tempLM35 = voltaje * 100.0;
+
+  // BMP180
+  float tempBMP = bmp.readTemperature();
+
+  // Filtro de valores erróneos
+  if (tempLM35 > 0 && tempLM35 < 100) {
+
+    Serial.print(tiempo);
+    Serial.print(",");
+    Serial.print(tempLM35);
+    Serial.print(",");
+    Serial.println(tempBMP);
+  }
+
+  // Tiempo de muestreo (cada 5 s)
+  delay(5000);
+}
+
+-------------------------------------------------------------
+------------ función de transferencia MATLAB-----------------
+
+clc; clear; close all;
+
+%% Cargar datos
+data = readtable('datos.csv');
+
+tiempo = data{:,1};
+LM35 = data{:,2};
+BMP = data{:,3};
+
+%% ===============================
+% ANÁLISIS LM35
+%% ===============================
+
+T0_LM = LM35(1);
+Tf_LM = LM35(end);
+
+% 63.2%
+T63_LM = T0_LM + 0.632*(Tf_LM - T0_LM);
+
+% Encontrar tau
+[~, idx_LM] = min(abs(LM35 - T63_LM));
+tau_LM = tiempo(idx_LM);
+
+% Ganancia
+K_LM = Tf_LM - T0_LM;
+
+%% ===============================
+% ANÁLISIS BMP180
+%% ===============================
+
+T0_BMP = BMP(1);
+Tf_BMP = BMP(end);
+
+T63_BMP = T0_BMP + 0.632*(Tf_BMP - T0_BMP);
+
+[~, idx_BMP] = min(abs(BMP - T63_BMP));
+tau_BMP = tiempo(idx_BMP);
+
+K_BMP = Tf_BMP - T0_BMP;
+
+%% ===============================
+% GRÁFICAS
+%% ===============================
+
+figure;
+
+% LM35
+subplot(2,1,1)
+plot(tiempo, LM35, 'r', 'LineWidth', 2); hold on;
+yline(T63_LM, '--k', '63.2%');
+xline(tau_LM, '--g', 'tau');
+grid on;
+title('LM35');
+xlabel('Tiempo (s)');
+ylabel('Temperatura (°C)');
+
+% BMP180
+subplot(2,1,2)
+plot(tiempo, BMP, 'b', 'LineWidth', 2); hold on;
+yline(T63_BMP, '--k', '63.2%');
+xline(tau_BMP, '--g', 'tau');
+grid on;
+title('BMP180');
+xlabel('Tiempo (s)');
+ylabel('Temperatura (°C)');
+
+%% ===============================
+% RESULTADOS
+%% ===============================
+
+fprintf('\n===== RESULTADOS =====\n');
+
+fprintf('\n--- LM35 ---\n');
+fprintf('T0 = %.2f °C\n', T0_LM);
+fprintf('Tf = %.2f °C\n', Tf_LM);
+fprintf('Tau = %.2f s\n', tau_LM);
+fprintf('K = %.2f °C\n', K_LM);
+fprintf('G(s) = %.2f / (%.2f s + 1)\n', K_LM, tau_LM);
+
+fprintf('\n--- BMP180 ---\n');
+fprintf('T0 = %.2f °C\n', T0_BMP);
+fprintf('Tf = %.2f °C\n', Tf_BMP);
+fprintf('Tau = %.2f s\n', tau_BMP);
+fprintf('K = %.2f °C\n', K_BMP);
+fprintf('G(s) = %.2f / (%.2f s + 1)\n', K_BMP, tau_BMP);
+
+
+---------------------------------------------------------------------------------
+---------------------------------altitud-----------------------------------------
+
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
+
+Adafruit_BMP085 bmp;
+
+// Presión meteorológica actual de Zacatecas
+const float PRESION_NIVEL_MAR = 102300; // Pa
+
+void setup() {
+
+  Serial.begin(9600);
+
+  if (!bmp.begin()) {
+    Serial.println("No se detecta BMP180");
+    while (1);
+  }
+
+  Serial.println("BMP180 iniciado correctamente");
+}
+
+void loop() {
+
+  // Lectura de presión absoluta
+  float presion = bmp.readPressure();
+
+  // Cálculo de altitud usando presión meteorológica real
+  float altitud = bmp.readAltitude(PRESION_NIVEL_MAR);
+
+  // Temperatura
+  float temperatura = bmp.readTemperature();
+
+  Serial.print("Temperatura: ");
+  Serial.print(temperatura);
+  Serial.println(" °C");
+
+  Serial.print("Presion absoluta: ");
+  Serial.print(presion);
+  Serial.println(" Pa");
+
+  Serial.print("Altitud calculada: ");
+  Serial.print(altitud);
+  Serial.println(" m");
+
+  Serial.println("------------------------");
+
+  delay(2000);
+}
+
+-------------------------------------------------------------------------------------------
+--------------------------------------flujo vehicular--------------------------------------
+
+#include <Wire.h>
+#include <Adafruit_BMP085.h>
+
+Adafruit_BMP085 bmp;
+
+// --- Tus Umbrales Originales ---
+const float UMBRAL_MOTO   = 1000.0;
+const float UMBRAL_AUTO   = 2000.0;
+const float UMBRAL_CAMION = 3000.0;
+
+// --- Distancias Predeterminadas (Metros entre ejes) ---
+const float DIST_MOTO   = 1.30; 
+const float DIST_AUTO   = 2.65;
+const float DIST_CAMION = 5.00;
+
+const unsigned long TIEMPO_MIN_ENTRE_EJES = 150; // Para evitar rebotes del mismo eje
+const unsigned long TIEMPO_MAX_ENTRE_EJES = 3000; // Si no hay 2do pulso en 3s, se cancela
+const unsigned long COOLDOWN_VEHICULO     = 800;  // Tiempo para esperar al siguiente carro
+
+float baselinePresion = 0;
+bool esperandoSegundoPulso = false;
+unsigned long tiempoPrimerPulso = 0;
+unsigned long ultimaDeteccionTotal = 0;
+float presionMaximaRegistrada = 0;
+
+int contMoto = 0, contAuto = 0, contCamion = 0, contTotal = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  if (!bmp.begin()) {
+    Serial.println("ERROR: No se encontró el BMP180.");
+    while (1);
+  }
+
+  Serial.println("Calibrando... no presiones la manguera.");
+  delay(2000);
+
+  long suma = 0;
+  for (int i = 0; i < 50; i++) {
+    suma += bmp.readPressure();
+    delay(50);
+  }
+  baselinePresion = suma / 50.0;
+
+  Serial.print("Baseline: ");
+  Serial.print(baselinePresion);
+  Serial.println(" Pa - Sistema listo (Esperando primer pulso)");
+}
+
+void loop() {
+  float presionActual = bmp.readPressure();
+  float delta = presionActual - baselinePresion;
+  unsigned long ahora = millis();
+
+  // --- LÓGICA DEL PRIMER PULSO ---
+  if (!esperandoSegundoPulso && delta > UMBRAL_MOTO) {
+    // Solo detecta si ya pasó el cooldown del vehículo anterior
+    if (ahora - ultimaDeteccionTotal > COOLDOWN_VEHICULO) {
+      esperandoSegundoPulso = true;
+      tiempoPrimerPulso = ahora;
+      presionMaximaRegistrada = delta;
+      Serial.println("-> Primer pulso detectado. Esperando segundo...");
+    }
+  }
+
+  // --- LÓGICA DEL SEGUNDO PULSO ---
+  if (esperandoSegundoPulso) {
+    // Actualizamos la presión máxima por si el segundo eje pisa más fuerte
+    if (delta > presionMaximaRegistrada) presionMaximaRegistrada = delta;
+
+    // Si detectamos el segundo impacto (respetando un tiempo mínimo de separación)
+    if (delta > UMBRAL_MOTO && (ahora - tiempoPrimerPulso) > TIEMPO_MIN_ENTRE_EJES) {
+      unsigned long tiempoTranscurrido = ahora - tiempoPrimerPulso;
+
+      // ¡Aquí es donde soltamos todos los datos!
+      procesarYMostrar(presionMaximaRegistrada, tiempoTranscurrido);
+
+      // Reset total para el siguiente vehículo
+      esperandoSegundoPulso = false;
+      ultimaDeteccionTotal = ahora;
+    }
+
+    // Cancelación por tiempo (Si el vehículo se detuvo o fue un error)
+    if (ahora - tiempoPrimerPulso > TIEMPO_MAX_ENTRE_EJES) {
+      esperandoSegundoPulso = false;
+      Serial.println("-> Segundo pulso no detectado (Timeout). Reintentando...");
+    }
+  }
+
+  delay(10); // Lectura rápida para no perder el pico de presión
+}
+
+void procesarYMostrar(float presion, unsigned long tMs) {
+  contTotal++;
+  String tipo;
+  float distancia = 0;
+
+  // Clasificación por presión
+  if (presion >= UMBRAL_CAMION)      { tipo = "CAMION/BUS"; contCamion++; distancia = DIST_CAMION; }
+  else if (presion >= UMBRAL_AUTO)   { tipo = "AUTOMOVIL";  contAuto++;   distancia = DIST_AUTO;   }
+  else                               { tipo = "MOTO/BICI";  contMoto++;   distancia = DIST_MOTO;   }
+
+  // Velocidad = Distancia / Tiempo (convertido a km/h)
+  float velocidadKmh = (distancia / (tMs / 1000.0)) * 3.6;
+
+  Serial.println("\n=== VEHICULO COMPLETADO ===");
+  Serial.print("Tipo        : "); Serial.println(tipo);
+  Serial.print("Velocidad   : "); Serial.print(velocidadKmh); Serial.println(" km/h");
+  Serial.print("Tiempo e/e  : "); Serial.print(tMs); Serial.println(" ms");
+  Serial.print("Presion Max : "); Serial.print(presion); Serial.println(" Pa");
+  Serial.println("----------- CONTEO -----------");
+  Serial.print("Motos: "); Serial.print(contMoto);
+  Serial.print(" | Autos: "); Serial.print(contAuto);
+  Serial.print(" | Camiones: "); Serial.println(contCamion);
+  Serial.print("TOTAL: "); Serial.println(contTotal);
+  Serial.println("==============================\n");
+}
+
+--------------------------------------------------------------------------------------------------------
