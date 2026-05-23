@@ -1,0 +1,219 @@
+-----------------------------------------------------------------------------------------
+-------------------------------Temperatura 1 (con el BMP180)-----------------------------
+
+#include <Wire.h> //librería de Arduino para comunicación I2C.
+#include <Adafruit_BMP085.h> //Libreria del sensor.
+
+Adafruit_BMP085 bmp; //Se crea un objeto llamado "bmp" para usarla libreria más facil. 
+
+void setup() {
+  Serial.begin(9600); //inicia la comunicación serial a 9600 baudios.
+  bmp.begin();  // inicializa el sensor. Internamente establece la conexión I2C.
+}
+
+void loop() {
+  float T = bmp.readTemperature() ; //devuelve la temperatura en °C.
+
+  //impresion de los valores. "println" genera un salto de linea.  
+  Serial.println(T);
+
+  delay(2000);//pausa de 2 seg. 
+}
+
+-----------------------------------------------------------------------------------------
+-------------------------Temperatura 2 y Humedad (con el AHT20)--------------------------
+
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
+#include <Adafruit_BMP085.h>
+
+Adafruit_AHTX0 aht;
+Adafruit_BMP085 bmp;
+
+void setup() {
+  Serial.begin(9600);
+  delay(1000);
+  Wire.begin();
+  aht.begin();
+  Wire.end();
+  delay(200);
+  Wire.begin();
+  delay(200);
+  bmp.begin();
+}
+
+void loop() {
+  sensors_event_t humidity, temp;
+  aht.getEvent(&humidity, &temp);
+
+  float tempBMP = bmp.readTemperature();
+
+  Serial.print(tempBMP);
+  Serial.print(",");
+  Serial.print(temp.temperature);
+  Serial.print(",");
+  Serial.println(humidity.relative_humidity);
+
+  delay(2000);
+}
+
+-----------------------------------------------------------------------------------------
+----------------------------Gráfica psicrométrica (MATLAB)-------------------------------
+
+clc;
+clear;
+close all;
+
+%% Leer datos
+datos = readmatrix('datos.xlsx');
+
+T = datos(:,1);
+HR = datos(:,2);
+
+%% Separar calentamiento y enfriamiento
+idx = 20;
+
+T_enf = T(1:idx);
+HR_enf = HR(1:idx);
+
+T_cal = T(idx+1:end);
+HR_cal = HR(idx+1:end);
+
+%% Datos importantes
+HR_max = max(HR);
+HR_min = min(HR);
+
+T_HRmax = T(HR == HR_max);
+T_HRmin = T(HR == HR_min);
+
+Tmin = min(T);
+Tmax = max(T);
+
+HR_range = HR_max - HR_min;
+
+%% Figura general
+figure('Color','white','Position',[100 100 1200 700]);
+
+tiledlayout(2,4,'Padding','compact','TileSpacing','compact');
+
+%% ======================================
+%% GRAFICA PRINCIPAL (TEMA CLARO)
+%% ======================================
+nexttile([1 4]);
+
+hold on;
+grid on;
+box on;
+
+plot(T_cal, HR_cal,'-o', ...
+    'Color',[0.85 0.33 0.1], ...
+    'LineWidth',2,...
+    'MarkerFaceColor',[0.85 0.33 0.1]);
+
+plot(T_enf, HR_enf,'-o', ...
+    'Color',[0 0.45 0.74], ...
+    'LineWidth',2,...
+    'MarkerFaceColor',[0 0.45 0.74]);
+
+xlabel('Temperatura promedio (°C)','FontSize',12);
+ylabel('Humedad relativa (%)','FontSize',12);
+
+title('Curva psicrométrica experimental','FontSize',14);
+
+legend('Calentamiento','Enfriamiento',...
+    'Location','northwest');
+
+xlim([21 28]);
+ylim([35 85]);
+
+%% ======================================
+%% TARJETA 1
+%% ======================================
+nexttile;
+
+axis off;
+set(gca,'Color','#1E1E1E');
+
+rectangle('Position',[0 0 1 1],...
+          'FaceColor',[0.12 0.12 0.12],...
+          'EdgeColor','none');
+
+text(0.05,0.8,'HR máxima alcanzada',...
+    'Color','w','FontSize',12,'FontWeight','bold');
+
+text(0.05,0.45,sprintf('%.2f %%',HR_max),...
+    'Color',[0.2 1 0.2],...
+    'FontSize',24,'FontWeight','bold');
+
+text(0.05,0.15,sprintf('a %.2f °C',T_HRmax),...
+    'Color','w','FontSize',12);
+
+%% ======================================
+%% TARJETA 2
+%% ======================================
+nexttile;
+
+axis off;
+set(gca,'Color','#1E1E1E');
+
+rectangle('Position',[0 0 1 1],...
+          'FaceColor',[0.12 0.12 0.12],...
+          'EdgeColor','none');
+
+text(0.05,0.8,'HR mínima alcanzada',...
+    'Color','w','FontSize',12,'FontWeight','bold');
+
+text(0.05,0.45,sprintf('%.2f %%',HR_min),...
+    'Color',[1 0.4 0.2],...
+    'FontSize',24,'FontWeight','bold');
+
+text(0.05,0.15,sprintf('a %.2f °C',T_HRmin),...
+    'Color','w','FontSize',12);
+
+%% ======================================
+%% TARJETA 3
+%% ======================================
+nexttile;
+
+axis off;
+set(gca,'Color','#1E1E1E');
+
+rectangle('Position',[0 0 1 1],...
+          'FaceColor',[0.12 0.12 0.12],...
+          'EdgeColor','none');
+
+text(0.05,0.8,'Rango de temperatura',...
+    'Color','w','FontSize',12,'FontWeight','bold');
+
+text(0.05,0.45,sprintf('%.2f °C',Tmax-Tmin),...
+    'Color','w',...
+    'FontSize',24,'FontWeight','bold');
+
+text(0.05,0.15,...
+    sprintf('%.2f–%.2f °C',Tmin,Tmax),...
+    'Color','w','FontSize',12);
+
+%% ======================================
+%% TARJETA 4
+%% ======================================
+nexttile;
+
+axis off;
+set(gca,'Color','#1E1E1E');
+
+rectangle('Position',[0 0 1 1],...
+          'FaceColor',[0.12 0.12 0.12],...
+          'EdgeColor','none');
+
+text(0.05,0.8,'Rango de HR cubierto',...
+    'Color','w','FontSize',12,'FontWeight','bold');
+
+text(0.05,0.45,sprintf('%.2f %%',HR_range),...
+    'Color',[0.2 1 0.2],...
+    'FontSize',24,'FontWeight','bold');
+
+text(0.05,0.15,...
+    sprintf('%.2f %% → %.2f %%',HR_min,HR_max),...
+    'Color','w','FontSize',12);
+
+----------------------------------------------------------------------
