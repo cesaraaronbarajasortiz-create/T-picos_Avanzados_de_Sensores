@@ -1,0 +1,407 @@
+------------------------------------------------------------------------------------
+---------------------------Lectura en ppm por gas-----------------------------------
+
+#define PIN_SENSOR    A0
+#define RL            10000.0
+#define VC            5.0
+#define MUESTRAS_CAL  200
+
+float R0        = 0.0;
+int   gasActivo = 0;   // 0=espera, 1=CO, 2=Etanol, 3=H2, 4=Metano
+
+// ── Calcula resistencia del sensor ──────────────────────────
+float calcularRs(int raw) {
+  float Vout = raw * (VC / 1023.0);
+  if (Vout <= 0) return 999999.0;
+  return RL * (VC - Vout) / Vout;
+}
+
+// ── Modelo curva datasheet: ppm = a * (Rs/R0)^b ─────────────
+float calcularPPM(float ratio, float a, float b) {
+  if (ratio <= 0) return 0;
+  return a * pow(ratio, b);
+}
+
+// ── Calibración en aire limpio ───────────────────────────────
+void calibrar() {
+  Serial.println("==============================================");
+  Serial.println("  CALIDAD DE AIRE - MiCS5524");
+  Serial.println("  Calibrando... asegure aire limpio.");
+  Serial.println("  Espere 3 minutos de calentamiento.");
+  Serial.println("==============================================");
+  delay(180000);
+
+  float suma = 0;
+  for (int i = 0; i < MUESTRAS_CAL; i++) {
+    suma += calcularRs(analogRead(PIN_SENSOR));
+    delay(50);
+  }
+  R0 = suma / MUESTRAS_CAL;
+
+  Serial.print("  R0 = ");
+  Serial.print(R0, 1);
+  Serial.println(" ohms  -  Calibracion completada.");
+  Serial.println("  Rs/R0 en aire limpio debe ser ~1.0");
+  Serial.println("  Si el valor es muy diferente, recalibrar.");
+  mostrarMenu();
+}
+
+// ── Menú de selección de gas ─────────────────────────────────
+void mostrarMenu() {
+  Serial.println("==============================================");
+  Serial.println("  Seleccione el gas a medir:");
+  Serial.println("  1 -> CO        (fuente: encendedor)");
+  Serial.println("  2 -> Etanol    (fuente: alcohol 70%)");
+  Serial.println("  3 -> H2        (fuente: bateria en carga)");
+  Serial.println("  4 -> Metano    (fuente: gas LP / estufa)");
+  Serial.println("  C -> Recalibrar R0 (nuevo warm-up)");
+  Serial.println("  M -> Volver a este menu");
+  Serial.println("==============================================");
+}
+
+// ── Procesa selección del usuario ────────────────────────────
+void procesarSerial() {
+  if (!Serial.available()) return;
+  char tecla = Serial.read();
+
+  if (tecla == '1') {
+    gasActivo = 1;
+    Serial.println(">> Gas: CO  |  Acerque el encendedor al sensor.");
+    Serial.println("Rs/R0   |  CO ppm");
+    Serial.println("---------------------------");
+  }
+  else if (tecla == '2') {
+    gasActivo = 2;
+    Serial.println(">> Gas: Etanol  |  Acerque el algodon con alcohol.");
+    Serial.println("Rs/R0   |  Etanol ppm");
+    Serial.println("---------------------------");
+  }
+  else if (tecla == '3') {
+    gasActivo = 3;
+    Serial.println(">> Gas: H2  |  Acerque la bateria en carga.");
+    Serial.println("Rs/R0   |  H2 ppm");
+    Serial.println("---------------------------");
+  }
+  else if (tecla == '4') {
+    gasActivo = 4;
+    Serial.println(">> Gas: Metano  |  Acerque el encendedor de cocina.");
+    Serial.println("Rs/R0   |  Metano ppm (ref. curva etanol)");
+    Serial.println("---------------------------");
+  }
+  else if (tecla == 'C' || tecla == 'c') {
+    gasActivo = 0;
+    Serial.println(">> Recalibrando... asegure aire limpio.");
+    calibrar();
+  }
+  else if (tecla == 'M' || tecla == 'm') {
+    gasActivo = 0;
+    mostrarMenu();
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  calibrar();
+}
+
+void loop() {
+  procesarSerial();
+
+  // ── Si no hay gas seleccionado, no mide nada ─────────────
+  if (gasActivo == 0) {
+    delay(500);
+    return;
+  }
+
+  int   raw   = analogRead(PIN_SENSOR);
+  float Rs    = calcularRs(raw);
+  float ratio = Rs / R0;
+
+  // Coeficientes del datasheet MiCS5524 (SGX Sensortech, 2014)
+  float ppm_CO     = calcularPPM(ratio, 526.91, -1.734);
+  float ppm_Etanol = calcularPPM(ratio,   1.53,  -1.710);
+  float ppm_H2     = calcularPPM(ratio, 1010.0,  -1.680);
+  float ppm_Metano = calcularPPM(ratio,   1.53,  -1.710);
+
+  Serial.print(ratio, 4);
+  Serial.print("  |  ");
+
+  if (gasActivo == 1) {
+    Serial.print("[CO]      ");
+    Serial.print(ppm_CO, 2);
+    Serial.println(" ppm");
+  }
+  else if (gasActivo == 2) {
+    Serial.print("[Etanol]  ");
+    Serial.print(ppm_Etanol, 2);
+    Serial.println(" ppm");
+  }
+  else if (gasActivo == 3) {
+    Serial.print("[H2]      ");
+    Serial.print(ppm_H2, 2);
+    Serial.println(" ppm");
+  }
+  else if (gasActivo == 4) {
+    Serial.print("[Metano*] ");
+    Serial.print(ppm_Metano, 2);
+    Serial.println(" ppm  (*ref. curva etanol)");
+  }
+
+  delay(1000);
+}
+
+---------------------------------------------------------------------------------------
+--------------------------------------Alcoholímetro------------------------------------
+
+#define PIN_SENSOR        A0
+#define RL                10000.0
+#define VC                5.0
+#define MUESTRAS_CAL      200
+#define A_ETANOL          1.53
+#define B_ETANOL         -1.71
+#define FACTOR_PARTICION  2100.0
+
+float R0       = 0.0;
+int   prueba   = 0;    // 0 = esperando, 1 = sin alcohol, 2 = con alcohol
+
+// ── Calcula resistencia del sensor ──────────────────────────
+float calcularRs(int raw) {
+  float Vout = raw * (VC / 1023.0);
+  if (Vout <= 0) return 999999.0;
+  return RL * (VC - Vout) / Vout;
+}
+
+// ── Modelo curva datasheet: ppm = a * (Rs/R0)^b ─────────────
+float calcularPPM(float ratio, float a, float b) {
+  if (ratio <= 0) return 0;
+  return a * pow(ratio, b);
+}
+
+// ── ppm etanol → BrAC (mg/L en aliento) ─────────────────────
+float ppmToBrAC(float ppm) {
+  return ppm / 1000.0;
+}
+
+// ── BrAC → BAC usando factor de partición 2100:1 ────────────
+float brACToBAC(float brAC) {
+  return (brAC * FACTOR_PARTICION) / 1000.0;
+}
+
+// ── Interpreta nivel de BAC ──────────────────────────────────
+String interpretarBAC(float bac) {
+  if (bac < 0.1) return "Sin alcohol detectable";
+  if (bac < 0.3) return "Muy bajo";
+  if (bac < 0.5) return "Bajo";
+  if (bac < 0.8) return "Precaucion";
+  if (bac < 1.5) return "SOBRE LIMITE LEGAL";
+  return         "NIVEL PELIGROSO";
+}
+
+// ── Calibración en aire limpio ───────────────────────────────
+void calibrar() {
+  Serial.println("==============================================");
+  Serial.println("  ALCOHOLIMETRO - MiCS5524");
+  Serial.println("  Calibrando en aire limpio...");
+  Serial.println("  Espere 3 minutos de calentamiento.");
+  Serial.println("==============================================");
+  delay(180000);
+
+  float suma = 0;
+  for (int i = 0; i < MUESTRAS_CAL; i++) {
+    suma += calcularRs(analogRead(PIN_SENSOR));
+    delay(50);
+  }
+  R0 = suma / MUESTRAS_CAL;
+
+  Serial.print("  R0 = ");
+  Serial.print(R0, 1);
+  Serial.println(" ohms  -  Calibracion completada.");
+  mostrarMenu();
+}
+
+// ── Menú de pruebas ──────────────────────────────────────────
+void mostrarMenu() {
+  Serial.println("==============================================");
+  Serial.println("  Seleccione la prueba:");
+  Serial.println("  1 -> Prueba SIN alcohol (exhalar normal)");
+  Serial.println("  2 -> Prueba CON alcohol (algodon 70%)");
+  Serial.println("  M -> Volver a este menu");
+  Serial.println("==============================================");
+}
+
+// ── Procesa entrada del usuario ──────────────────────────────
+void procesarSerial() {
+  if (!Serial.available()) return;
+  char tecla = Serial.read();
+
+  if (tecla == '1') {
+    prueba = 1;
+    Serial.println(">> PRUEBA 1 - SIN ALCOHOL");
+    Serial.println(">> Exhale normalmente en la carcasa.");
+    Serial.println("Rs/R0   | ppm     | BrAC mg/L | BAC g/L | Estado");
+    Serial.println("--------------------------------------------------");
+  }
+  else if (tecla == '2') {
+    prueba = 2;
+    Serial.println(">> PRUEBA 2 - CON ALCOHOL (algodon 70%)");
+    Serial.println(">> Introduzca el algodon en la entrada de la carcasa.");
+    Serial.println("Rs/R0   | ppm     | BrAC mg/L | BAC g/L | Estado");
+    Serial.println("--------------------------------------------------");
+  }
+  else if (tecla == 'M' || tecla == 'm') {
+    prueba = 0;
+    mostrarMenu();
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  calibrar();
+}
+
+void loop() {
+  procesarSerial();
+
+  // Solo mide cuando hay una prueba activa
+  if (prueba == 0) {
+    delay(500);
+    return;
+  }
+
+  int   raw   = analogRead(PIN_SENSOR);
+  float Rs    = calcularRs(raw);
+  float ratio = Rs / R0;
+  float ppm   = calcularPPM(ratio, A_ETANOL, B_ETANOL);
+  float brAC  = ppmToBrAC(ppm);
+  float bac   = brACToBAC(brAC);
+
+  // Etiqueta de prueba
+  String etiqueta = (prueba == 1) ? "[SIN-ALCOHOL] " : "[CON-ALCOHOL] ";
+
+  Serial.print(etiqueta);
+  Serial.print(ratio, 3);  Serial.print("  |  ");
+  Serial.print(ppm,   2);  Serial.print(" ppm  |  ");
+  Serial.print(brAC,  4);  Serial.print(" mg/L  |  ");
+  Serial.print(bac,   4);  Serial.print(" g/L  |  ");
+  Serial.println(interpretarBAC(bac));
+
+  delay(1000);
+}
+
+--------------------------------------------------------------------------------
+-------------------------------Actividad física---------------------------------
+
+#define PIN_SENSOR    A0
+#define RL            10000.0
+#define VC            5.0
+#define MUESTRAS_CAL  200
+
+float R0     = 0.0;
+int   modo   = 0;    // 0=espera, 1=reposo, 2=post-ejercicio
+
+// ── Calcula resistencia del sensor ──────────────────────────
+float calcularRs(int raw) {
+  float Vout = raw * (VC / 1023.0);
+  if (Vout <= 0) return 999999.0;
+  return RL * (VC - Vout) / Vout;
+}
+
+// ── Modelo curva datasheet: ppm = a * (Rs/R0)^b ─────────────
+float calcularPPM(float ratio, float a, float b) {
+  if (ratio <= 0) return 0;
+  return a * pow(ratio, b);
+}
+
+// ── Calibración en aire limpio ───────────────────────────────
+void calibrar() {
+  Serial.println("==============================================");
+  Serial.println("  ACTIVIDAD FISICA - MiCS5524");
+  Serial.println("  Calibrando en aire limpio...");
+  Serial.println("  Espere 3 minutos de calentamiento.");
+  Serial.println("==============================================");
+  delay(180000);
+
+  float suma = 0;
+  for (int i = 0; i < MUESTRAS_CAL; i++) {
+    suma += calcularRs(analogRead(PIN_SENSOR));
+    delay(50);
+  }
+  R0 = suma / MUESTRAS_CAL;
+
+  Serial.print("  R0 = ");
+  Serial.print(R0, 1);
+  Serial.println(" ohms  -  Calibracion completada.");
+  mostrarMenu();
+}
+
+// ── Menú de selección ────────────────────────────────────────
+void mostrarMenu() {
+  Serial.println("==============================================");
+  Serial.println("  Seleccione el modo:");
+  Serial.println("  1 -> REPOSO        (antes de correr)");
+  Serial.println("  2 -> POST-EJERCICIO (inmediatamente despues)");
+  Serial.println("  M -> Volver a este menu");
+  Serial.println("==============================================");
+}
+
+// ── Procesa entrada del usuario ──────────────────────────────
+void procesarSerial() {
+  if (!Serial.available()) return;
+  char tecla = Serial.read();
+
+  if (tecla == '1') {
+    modo = 1;
+    Serial.println(">> Modo: REPOSO");
+    Serial.println(">> Exhale normalmente al sensor.");
+    Serial.println("Etiqueta        | CO ppm  | Etanol ppm | H2 ppm");
+    Serial.println("--------------------------------------------------");
+  }
+  else if (tecla == '2') {
+    modo = 2;
+    Serial.println(">> Modo: POST-EJERCICIO");
+    Serial.println(">> Exhale inmediatamente al sensor!");
+    Serial.println("Etiqueta        | CO ppm  | Etanol ppm | H2 ppm");
+    Serial.println("--------------------------------------------------");
+  }
+  else if (tecla == 'M' || tecla == 'm') {
+    modo = 0;
+    mostrarMenu();
+  }
+}
+
+void setup() {
+  Serial.begin(9600);
+  calibrar();
+}
+
+void loop() {
+  procesarSerial();
+
+  // No imprime nada mientras espera selección
+  if (modo == 0) {
+    delay(500);
+    return;
+  }
+
+  int   raw   = analogRead(PIN_SENSOR);
+  float Rs    = calcularRs(raw);
+  float ratio = Rs / R0;
+
+  // Coeficientes del datasheet MiCS5524 (SGX Sensortech, 2014)
+  float ppm_CO     = calcularPPM(ratio, 526.91, -1.734);
+  float ppm_Etanol = calcularPPM(ratio,   1.53, -1.710);
+  float ppm_H2     = calcularPPM(ratio, 1010.0, -1.680);
+
+  String etiqueta = (modo == 1) ? "[REPOSO]        " : "[POST-EJERCICIO]";
+
+  Serial.print(etiqueta);
+  Serial.print("  CO: ");      Serial.print(ppm_CO,     2); Serial.print(" ppm");
+  Serial.print("  Etanol: ");  Serial.print(ppm_Etanol, 2); Serial.print(" ppm");
+  Serial.print("  H2: ");      Serial.print(ppm_H2,     2); Serial.println(" ppm");
+
+  delay(1000);
+}
+
+----------------------------------------------------------------------------------------
+
+
